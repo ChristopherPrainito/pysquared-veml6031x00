@@ -16,14 +16,14 @@ gain and integration time settings.
 """
 
 import time
-from micropython import const
 
 import adafruit_bus_device.i2c_device as i2cdevice
-from adafruit_register.i2c_struct import ROUnaryStruct
-from adafruit_register.i2c_bits import RWBits
 from adafruit_register.i2c_bit import RWBit
+from adafruit_register.i2c_bits import RWBits
+from adafruit_register.i2c_struct import ROUnaryStruct
 from adafruit_tca9548a import TCA9548A_Channel
 from busio import I2C
+from micropython import const
 
 from ....logger import Logger
 from ....protos.light_sensor import LightSensorProto
@@ -45,12 +45,13 @@ except ImportError:
 # Low-Level Driver: VEML6031X00
 # ============================================================================
 
+
 class _VEML6031X00:
     """Low-level driver for the VEML6031X00 ambient light sensor.
-    
+
     This internal class handles direct I2C communication with the sensor hardware.
     Users should interact with the high-level VEML6031X00Manager instead.
-    
+
     :param ~busio.I2C i2c_bus: The I2C bus the device is connected to
     :param int address: The I2C device address. Defaults to :const:`0x29`
     """
@@ -188,16 +189,16 @@ class _VEML6031X00:
 
     def __init__(self, i2c_bus: I2C, address: int = 0x29) -> None:
         """Initialize the VEML6031X00 sensor.
-        
+
         Args:
             i2c_bus: The I2C bus connected to the sensor
             address: The I2C device address (default: 0x29)
-            
+
         Raises:
             RuntimeError: If unable to initialize the sensor after 3 attempts
         """
         self.i2c_device = i2cdevice.I2CDevice(i2c_bus, address)
-        
+
         # Try to initialize the sensor with retry logic
         for _ in range(3):
             try:
@@ -213,7 +214,7 @@ class _VEML6031X00:
 
     def integration_time_value(self) -> float:
         """Get the current integration time value in milliseconds.
-        
+
         Returns:
             float: Integration time in milliseconds
         """
@@ -222,7 +223,7 @@ class _VEML6031X00:
 
     def gain_value(self) -> float:
         """Get the current gain multiplier value.
-        
+
         Returns:
             float: Gain multiplier (2, 1, 0.66, or 0.5)
         """
@@ -231,10 +232,10 @@ class _VEML6031X00:
 
     def resolution(self) -> float:
         """Calculate the lux resolution based on current gain and integration time.
-        
+
         The resolution determines how to convert raw sensor readings to lux values.
         It's calculated relative to the maximum sensitivity settings (gain=2, integration=400ms).
-        
+
         Returns:
             float: Resolution factor for lux calculation
         """
@@ -247,7 +248,7 @@ class _VEML6031X00:
             and self.integration_time_value() == integration_time_max
         ):
             return resolution_at_max
-        
+
         return (
             resolution_at_max
             * (integration_time_max / self.integration_time_value())
@@ -279,18 +280,18 @@ class _VEML6031X00:
     @property
     def autolux(self) -> float:
         """Lux value with auto-gain and auto-integration time.
-        
+
         This method automatically adjusts the gain and integration time to find
         the optimal settings for the current lighting conditions, then returns
         the lux value.
-        
+
         Returns:
             float: The calculated lux value with optimal settings.
         """
         # Store original settings to restore later
         original_gain = self.light_gain
         original_integration = self.light_integration_time
-        
+
         # Test configurations from highest to lowest sensitivity
         test_configs = [
             (self.ALS_GAIN_2, self.ALS_400MS),
@@ -298,27 +299,27 @@ class _VEML6031X00:
             (self.ALS_GAIN_2_3, self.ALS_200MS),
             (self.ALS_GAIN_1_2, self.ALS_100MS),
         ]
-        
+
         best_lux = None
         for gain, integration in test_configs:
             self.light_gain = gain
             self.light_integration_time = integration
             time.sleep(0.05)  # Allow sensor to settle
-            
+
             reading = self.light
             # Check if reading is in valid range (not saturated, not too low)
             if 100 < reading < 60000:
                 best_lux = self.lux
                 break
-        
+
         # Use last configuration if no optimal reading found
         if best_lux is None:
             best_lux = self.lux
-        
+
         # Restore original settings
         self.light_gain = original_gain
         self.light_integration_time = original_integration
-        
+
         return best_lux
 
 
@@ -326,9 +327,10 @@ class _VEML6031X00:
 # High-Level Manager: VEML6031X00Manager
 # ============================================================================
 
+
 class VEML6031X00Manager(LightSensorProto):
     """High-level manager for the VEML6031X00 ambient light sensor.
-    
+
     This class provides a clean interface for sensor operations with proper error
     handling, logging, and integration with the pysquared framework.
     """
@@ -405,7 +407,7 @@ class VEML6031X00Manager(LightSensorProto):
 
     def get_auto_lux(self) -> Lux:
         """Get lux reading with automatic gain and integration time optimization.
-        
+
         The sensor automatically adjusts settings to find the best configuration
         for current lighting conditions, avoiding saturation and low readings.
 
@@ -429,10 +431,10 @@ class VEML6031X00Manager(LightSensorProto):
     @staticmethod
     def _is_invalid_lux(lux: float | None) -> bool:
         """Check if a lux reading is invalid.
-        
+
         Args:
             lux: The lux reading to validate (can be None or a float)
-            
+
         Returns:
             bool: True if reading is invalid (None or zero), False otherwise
         """
@@ -440,7 +442,7 @@ class VEML6031X00Manager(LightSensorProto):
 
     def reset(self) -> None:
         """Reset the light sensor by power cycling it.
-        
+
         This performs a software reset by shutting down and re-enabling the sensor.
         """
         try:

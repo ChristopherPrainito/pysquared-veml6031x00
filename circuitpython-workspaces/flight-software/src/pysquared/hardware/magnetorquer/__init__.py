@@ -1,0 +1,1 @@
+"""Magnetorquer hardware management."""
