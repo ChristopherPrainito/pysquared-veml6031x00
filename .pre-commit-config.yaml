@@ -38,6 +38,7 @@ repos:
     rev: v2.4.1
     hooks:
       - id: codespell
+        args: [--ignore-words-list=als]  # ALS = Ambient Light Sensor
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.12.3

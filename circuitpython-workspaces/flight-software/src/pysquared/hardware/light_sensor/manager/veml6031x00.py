@@ -16,14 +16,14 @@ gain and integration time settings.
 """
 
 import time
-from micropython import const
 
 import adafruit_bus_device.i2c_device as i2cdevice
-from adafruit_register.i2c_struct import ROUnaryStruct
-from adafruit_register.i2c_bits import RWBits
 from adafruit_register.i2c_bit import RWBit
+from adafruit_register.i2c_bits import RWBits
+from adafruit_register.i2c_struct import ROUnaryStruct, UnaryStruct
 from adafruit_tca9548a import TCA9548A_Channel
 from busio import I2C
+from micropython import const
 
 from ....logger import Logger
 from ....protos.light_sensor import LightSensorProto
@@ -45,12 +45,13 @@ except ImportError:
 # Low-Level Driver: VEML6031X00
 # ============================================================================
 
+
 class _VEML6031X00:
     """Low-level driver for the VEML6031X00 ambient light sensor.
-    
+
     This internal class handles direct I2C communication with the sensor hardware.
     Users should interact with the high-level VEML6031X00Manager instead.
-    
+
     :param ~busio.I2C i2c_bus: The I2C bus the device is connected to
     :param int address: The I2C device address. Defaults to :const:`0x29`
     """
@@ -80,18 +81,18 @@ class _VEML6031X00:
     }
 
     # Integration time value mappings (in milliseconds)
-    integration_time_values = {
-        ALS_3_125MS: 3.125,
-        ALS_6_25MS: 6.25,
-        ALS_12_5MS: 12.5,
-        ALS_25MS: 25,
-        ALS_50MS: 50,
-        ALS_100MS: 100,
-        ALS_200MS: 200,
-        ALS_400MS: 400,
+    integration_time_values = {  # noqa: codespell  # ALS = Ambient Light Sensor
+        ALS_3_125MS: 3.125,  # noqa: codespell  # ALS = Ambient Light Sensor
+        ALS_6_25MS: 6.25,  # noqa: codespell  # ALS = Ambient Light Sensor
+        ALS_12_5MS: 12.5,  # noqa: codespell  # ALS = Ambient Light Sensor
+        ALS_25MS: 25,  # noqa: codespell  # ALS = Ambient Light Sensor
+        ALS_50MS: 50,  # noqa: codespell  # ALS = Ambient Light Sensor
+        ALS_100MS: 100,  # noqa: codespell  # ALS = Ambient Light Sensor
+        ALS_200MS: 200,  # noqa: codespell  # ALS = Ambient Light Sensor
+        ALS_400MS: 400,  # noqa: codespell  # ALS = Ambient Light Sensor
     }
 
-    # ALS - Ambient light sensor high resolution output data
+    # ALS - Ambient light sensor high resolution output data  # noqa: codespell
     light = ROUnaryStruct(0x04, "<H")
     """Ambient light data.
 
@@ -133,9 +134,20 @@ class _VEML6031X00:
             time.sleep(0.1)
     """
 
-    # ALS_CONF_0 - ALS gain, integration time, shutdown.
+    # ALS_CONF_0 - ALS gain, integration time, shutdown.  # noqa: codespell
+    # Full 16-bit configuration register for atomic writes
+    als_conf_0 = UnaryStruct(0x00, "<H")  # noqa: codespell
+    """Full 16-bit ALS configuration register for atomic writes."""
+    
+    # Individual bit/field accessors (for reading/convenience)
     light_shutdown = RWBit(0x00, 0, register_width=2)
     """Ambient light sensor shutdown. When ``True``, ambient light sensor is disabled."""
+    light_interrupt_enable = RWBit(0x00, 1, register_width=2)
+    """Ambient light interrupt enable. When ``True``, interrupt is enabled."""
+    light_active_force_trigger = RWBit(0x00, 2, register_width=2)
+    """Active force mode trigger. Set to ``True`` to trigger a single measurement."""
+    light_active_force_enable = RWBit(0x00, 3, register_width=2)
+    """Active force mode enable. When ``True``, sensor operates in single-shot mode."""
     light_gain = RWBits(2, 0x00, 11, register_width=2)
     """Ambient light gain setting. Gain settings are 2, 1, 2/3 and 1/2. Settings options are:
     ALS_GAIN_2, ALS_GAIN_1, ALS_GAIN_2_3, ALS_GAIN_1_2.
@@ -186,23 +198,31 @@ class _VEML6031X00:
 
     """
 
+    # ALS_INT - Interrupt status register
+    als_int_data_ready = RWBit(0x17, 3, register_width=1)  # noqa: codespell  # ALS = Ambient Light Sensor
+    """Data ready flag in active force mode. When ``True``, measurement is complete."""
+
     def __init__(self, i2c_bus: I2C, address: int = 0x29) -> None:
         """Initialize the VEML6031X00 sensor.
-        
+
         Args:
             i2c_bus: The I2C bus connected to the sensor
             address: The I2C device address (default: 0x29)
-            
+
         Raises:
             RuntimeError: If unable to initialize the sensor after 3 attempts
         """
         self.i2c_device = i2cdevice.I2CDevice(i2c_bus, address)
-        
+
         # Try to initialize the sensor with retry logic
         for _ in range(3):
             try:
                 # Set lowest gain to prevent overflow in bright light
                 self.light_gain = self.ALS_GAIN_1_2
+                # Enable active force mode for single-shot measurements
+                self.light_active_force_enable = True
+                # Disable interrupt
+                self.light_interrupt_enable = False
                 # Enable the ambient light sensor
                 self.light_shutdown = False
                 break
@@ -211,9 +231,105 @@ class _VEML6031X00:
         else:
             raise RuntimeError("Unable to enable VEML6031X00 device")
 
+    def trigger_measurement(self) -> None:
+        """Trigger a single measurement in active force mode.
+
+        This writes the entire configuration register atomically (like the C driver)
+        to ensure proper sensor operation. The configuration includes:
+        - Integration time (from current setting)
+        - Gain (from current setting)  
+        - Active force mode enabled
+        - Active force trigger set
+        - Interrupts disabled
+        - Sensor not shutdown
+        """
+        # Build configuration word matching C driver's veml6031_write_conf()
+        # Low byte (conf[0] in C driver):
+        # Bit 0: SD (shutdown) = 0
+        # Bit 1: INT_EN (interrupt enable) = 0
+        # Bit 2: TRIG (trigger) = 1
+        # Bit 3: AF (active force enable) = 1
+        # Bits 6:4: IT (integration time) from current setting
+        
+        # High byte (conf[1] in C driver):
+        # Bit 0: PON (power on ready) = 0
+        # Bits 2:1: PERS (persistence) = 0
+        # Bits 4:3: GAIN from current setting
+        # Bit 5: reserved = 0
+        # Bit 6: DIV4 = 0
+        # Bit 7: IR_SD = 0
+        
+        current_integration = self.light_integration_time
+        current_gain = self.light_gain
+        
+        # Build 16-bit config word: [high_byte][low_byte]
+        low_byte = (
+            0x00  # Bit 0: SD = 0 (not shutdown)
+            | 0x00  # Bit 1: INT_EN = 0 (interrupt disabled)
+            | 0x04  # Bit 2: TRIG = 1 (trigger measurement)
+            | 0x08  # Bit 3: AF = 1 (active force enabled)
+            | (current_integration << 4)  # Bits 6:4: integration time
+        )
+        
+        high_byte = (
+            0x00  # Bit 0: PON = 0
+            | 0x00  # Bits 2:1: PERS = 0
+            | (current_gain << 3)  # Bits 4:3: gain
+        )
+        
+        config_word = (high_byte << 8) | low_byte
+        
+        # Write entire config register atomically (single I2C transaction)
+        self.als_conf_0 = config_word  # noqa: codespell
+
+    def wait_for_data_ready(self, timeout_ms: int = 1000) -> bool:
+        """Wait for measurement to complete by polling data ready flag.
+
+        Args:
+            timeout_ms: Maximum time to wait in milliseconds (default: 1000ms)
+        Returns:
+            bool: True if data is ready, False if timeout occurred
+        """
+        # First wait for the integration time
+        integration_time_ms = self.integration_time_value()
+        time.sleep(integration_time_ms / 1000.0)
+
+        # Then poll the data ready flag
+        start_time = time.monotonic()
+        timeout_s = timeout_ms / 1000.0
+
+        while (time.monotonic() - start_time) < timeout_s:
+            if self.als_int_data_ready:
+                return True
+            time.sleep(0.001)  # 1ms polling interval
+
+        return False
+
+    def read_light_with_trigger(self) -> int:
+        """Perform a triggered measurement and return raw light data.
+
+        This is the recommended way to read from the sensor as it ensures
+        fresh data by triggering a new measurement and waiting for completion.
+
+        Returns:
+            int: Raw light sensor reading in counts
+
+        Raises:
+            RuntimeError: If measurement times out or fails
+        """
+        # Trigger new measurement
+        self.trigger_measurement()
+
+        # Wait for data ready
+        if not self.wait_for_data_ready():
+            raise RuntimeError("Timeout waiting for VEML6031X00 data ready")
+
+        # Read the data
+        return self.light
+
     def integration_time_value(self) -> float:
         """Get the current integration time value in milliseconds.
-        
+
         Returns:
             float: Integration time in milliseconds
         """
@@ -222,7 +338,7 @@ class _VEML6031X00:
 
     def gain_value(self) -> float:
         """Get the current gain multiplier value.
-        
+
         Returns:
             float: Gain multiplier (2, 1, 0.66, or 0.5)
         """
@@ -231,10 +347,10 @@ class _VEML6031X00:
 
     def resolution(self) -> float:
         """Calculate the lux resolution based on current gain and integration time.
-        
+
         The resolution determines how to convert raw sensor readings to lux values.
         It's calculated relative to the maximum sensitivity settings (gain=2, integration=400ms).
-        
+
         Returns:
             float: Resolution factor for lux calculation
         """
@@ -247,7 +363,7 @@ class _VEML6031X00:
             and self.integration_time_value() == integration_time_max
         ):
             return resolution_at_max
-        
+
         return (
             resolution_at_max
             * (integration_time_max / self.integration_time_value())
@@ -274,23 +390,24 @@ class _VEML6031X00:
                 print("Lux:", lux_reading.lux)
                 time.sleep(0.1)
         """
-        return self.resolution() * self.light
+        light_reading = self.read_light_with_trigger()
+        return self.resolution() * light_reading
 
     @property
     def autolux(self) -> float:
         """Lux value with auto-gain and auto-integration time.
-        
+
         This method automatically adjusts the gain and integration time to find
         the optimal settings for the current lighting conditions, then returns
         the lux value.
-        
+
         Returns:
             float: The calculated lux value with optimal settings.
         """
         # Store original settings to restore later
         original_gain = self.light_gain
         original_integration = self.light_integration_time
-        
+
         # Test configurations from highest to lowest sensitivity
         test_configs = [
             (self.ALS_GAIN_2, self.ALS_400MS),
@@ -298,27 +415,36 @@ class _VEML6031X00:
             (self.ALS_GAIN_2_3, self.ALS_200MS),
             (self.ALS_GAIN_1_2, self.ALS_100MS),
         ]
-        
+
         best_lux = None
         for gain, integration in test_configs:
             self.light_gain = gain
             self.light_integration_time = integration
-            time.sleep(0.05)  # Allow sensor to settle
-            
-            reading = self.light
-            # Check if reading is in valid range (not saturated, not too low)
-            if 100 < reading < 60000:
-                best_lux = self.lux
-                break
-        
+
+            # Trigger measurement and wait for data ready
+            try:
+                reading = self.read_light_with_trigger()
+                # Check if reading is in valid range (not saturated, not too low)
+                if 100 < reading < 60000:
+                    best_lux = self.resolution() * reading
+                    break
+            except RuntimeError:
+                # If measurement times out, try next configuration
+                continue
+
         # Use last configuration if no optimal reading found
         if best_lux is None:
-            best_lux = self.lux
-        
+            try:
+                reading = self.read_light_with_trigger()
+                best_lux = self.resolution() * reading
+            except RuntimeError:
+                # If still failing, return 0
+                best_lux = 0.0
+
         # Restore original settings
         self.light_gain = original_gain
         self.light_integration_time = original_integration
-        
+
         return best_lux
 
 
@@ -326,9 +452,10 @@ class _VEML6031X00:
 # High-Level Manager: VEML6031X00Manager
 # ============================================================================
 
+
 class VEML6031X00Manager(LightSensorProto):
     """High-level manager for the VEML6031X00 ambient light sensor.
-    
+
     This class provides a clean interface for sensor operations with proper error
     handling, logging, and integration with the pysquared framework.
     """
@@ -379,7 +506,9 @@ class VEML6031X00Manager(LightSensorProto):
             SensorReadingUnknownError: If sensor communication fails
         """
         try:
-            return Light(self._light_sensor.light)
+            # Use triggered measurement for fresh data
+            light_value = self._light_sensor.read_light_with_trigger()
+            return Light(light_value)
         except Exception as e:
             raise SensorReadingUnknownError("Failed to get light reading") from e
 
@@ -405,7 +534,7 @@ class VEML6031X00Manager(LightSensorProto):
 
     def get_auto_lux(self) -> Lux:
         """Get lux reading with automatic gain and integration time optimization.
-        
+
         The sensor automatically adjusts settings to find the best configuration
         for current lighting conditions, avoiding saturation and low readings.
 
@@ -429,10 +558,10 @@ class VEML6031X00Manager(LightSensorProto):
     @staticmethod
     def _is_invalid_lux(lux: float | None) -> bool:
         """Check if a lux reading is invalid.
-        
+
         Args:
             lux: The lux reading to validate (can be None or a float)
-            
+
         Returns:
             bool: True if reading is invalid (None or zero), False otherwise
         """
@@ -440,7 +569,7 @@ class VEML6031X00Manager(LightSensorProto):
 
     def reset(self) -> None:
         """Reset the light sensor by power cycling it.
-        
+
         This performs a software reset by shutting down and re-enabling the sensor.
         """
         try:

@@ -1,13 +1,13 @@
 """Test the VEML6031X00Manager class."""
 
 from typing import Generator
-from unittest.mock import MagicMock, PropertyMock, patch, call
+from unittest.mock import MagicMock, PropertyMock, patch
 
 import pytest
 from pysquared.hardware.exception import HardwareInitializationError
 from pysquared.hardware.light_sensor.manager.veml6031x00 import (
-    VEML6031X00Manager,
     _VEML6031X00,
+    VEML6031X00Manager,
 )
 from pysquared.logger import Logger
 from pysquared.sensor_reading.error import (
@@ -150,7 +150,9 @@ def test_reset_success(mock_veml6031x00, mock_i2c, mock_logger):
 
         sensor.reset()
         # Verify the logger was called
-        mock_logger.debug.assert_called_with("VEML6031X00 light sensor reset successfully")
+        mock_logger.debug.assert_called_with(
+            "VEML6031X00 light sensor reset successfully"
+        )
 
 
 def test_reset_failure(mock_veml6031x00, mock_i2c, mock_logger):
@@ -331,13 +333,17 @@ def test_veml6031x00_driver_init_retry_logic():
     mock_i2c = MagicMock()
 
     with patch("pysquared.hardware.light_sensor.manager.veml6031x00.i2cdevice"):
-        with patch.object(_VEML6031X00, "light_gain", new_callable=PropertyMock) as mock_gain:
-            with patch.object(_VEML6031X00, "light_shutdown", new_callable=PropertyMock) as mock_shutdown:
+        with patch.object(
+            _VEML6031X00, "light_gain", new_callable=PropertyMock
+        ) as mock_gain:
+            with patch.object(
+                _VEML6031X00, "light_shutdown", new_callable=PropertyMock
+            ) as mock_shutdown:
                 # First two attempts raise OSError, third succeeds
                 mock_gain.side_effect = [OSError(), OSError(), None]
                 mock_shutdown.side_effect = [None, None, None]
 
-                driver = _VEML6031X00(mock_i2c)
+                _driver = _VEML6031X00(mock_i2c)  # noqa: F841  # Testing initialization
 
                 # Should have tried 3 times
                 assert mock_gain.call_count == 3
@@ -348,11 +354,15 @@ def test_veml6031x00_driver_init_failure_after_retries():
     mock_i2c = MagicMock()
 
     with patch("pysquared.hardware.light_sensor.manager.veml6031x00.i2cdevice"):
-        with patch.object(_VEML6031X00, "light_gain", new_callable=PropertyMock) as mock_gain:
+        with patch.object(
+            _VEML6031X00, "light_gain", new_callable=PropertyMock
+        ) as mock_gain:
             # All attempts raise OSError
             mock_gain.side_effect = OSError()
 
-            with pytest.raises(RuntimeError, match="Unable to enable VEML6031X00 device"):
+            with pytest.raises(
+                RuntimeError, match="Unable to enable VEML6031X00 device"
+            ):
                 _VEML6031X00(mock_i2c)
 
 
@@ -437,7 +447,9 @@ def test_veml6031x00_lux_property():
         driver.light_integration_time = _VEML6031X00.ALS_400MS
 
         # Mock the light reading (read-only property)
-        with patch.object(_VEML6031X00, "light", new_callable=PropertyMock) as mock_light:
+        with patch.object(
+            _VEML6031X00, "light", new_callable=PropertyMock
+        ) as mock_light:
             mock_light.return_value = 1000
 
             # Lux should be resolution * light = 0.0034 * 1000 = 3.4
